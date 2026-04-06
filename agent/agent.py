@@ -16,8 +16,6 @@ from agent.tools import (
     bucket_distribution,
 )
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
 SYSTEM_PROMPT = """You are an autonomous data analyst specialising in customer churn.
 You have access to a set of tools to analyse a customer dataset.
 
@@ -44,6 +42,7 @@ def run_agent(question: str, df: pd.DataFrame) -> tuple[str, list[dict]]:
     """
     # We hold df in this closure so tools can access it without passing via API
     scored_df = [df.copy()]  # mutable container
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
     messages = [{"role": "user", "content": question}]
     tool_calls_log = []

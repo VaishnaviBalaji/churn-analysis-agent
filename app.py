@@ -4,12 +4,13 @@ Upload a customer CSV, ask a question, and the agent does the rest.
 """
 
 import os
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
 from agent.agent import run_agent
 
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 st.set_page_config(
     page_title="Churn Analysis Agent",

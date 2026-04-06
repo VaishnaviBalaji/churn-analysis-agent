@@ -6,27 +6,63 @@ Each function is called when Claude decides to use that tool.
 import os
 import json
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pandas as pd
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-CHURN_API_URL = os.getenv("CHURN_API_URL", "http://localhost:8000")
+MAX_CUSTOMERS = 100
+MAX_WORKERS = 5
+
+FEATURE_COLS = [
+    'tenure', 'gender_male', 'is_senior', 'has_partner', 'has_dependents',
+    'contract_type', 'paperless_billing', 'payment_method', 'monthly_charges',
+    'has_phone', 'multiple_lines', 'internet_service', 'has_online_security',
+    'has_tech_support', 'has_online_backup', 'has_device_protection',
+    'has_streaming_tv', 'has_streaming_movies', 'bundle_depth'
+]
+
+
+def _get_api_url() -> str:
+    return os.getenv("CHURN_API_URL", "http://localhost:8000")
+
+
+def _make_session() -> requests.Session:
+    """Create a requests session with automatic retry on connection errors."""
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
+
+
+def _score_one(record: dict) -> dict:
+    """Score a single customer record against the churn API."""
+    try:
+        session = _make_session()
+        resp = session.post(f"{_get_api_url()}/predict", json=record, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"API error: {e}")
+        return {"churn_propensity_score": None, "bucket": "error", "tenure_segment": None, "model_version": None}
 
 
 def score_customers(df: pd.DataFrame) -> pd.DataFrame:
     """
     Score a dataframe of customers using the churn propensity API.
+    Sends requests in parallel for speed. Caps at MAX_CUSTOMERS rows.
     Returns the dataframe with churn_score and bucket columns added.
     """
-    records = df.to_dict(orient="records")
-    results = []
+    df = df.head(MAX_CUSTOMERS).copy()
+    records = df[FEATURE_COLS].to_dict(orient="records")
+    results = [None] * len(records)
 
-    for record in records:
-        try:
-            resp = requests.post(f"{CHURN_API_URL}/predict", json=record, timeout=5)
-            resp.raise_for_status()
-            results.append(resp.json())
-        except Exception as e:
-            results.append({"churn_propensity_score": None, "bucket": "error", "tenure_segment": None, "model_version": None})
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(_score_one, record): i for i, record in enumerate(records)}
+        for future in as_completed(futures):
+            i = futures[future]
+            results[i] = future.result()
 
     scores_df = pd.DataFrame(results)
     df = df.copy()
